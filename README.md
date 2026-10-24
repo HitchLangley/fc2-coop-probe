@@ -65,6 +65,7 @@ Lua is 4.0: use `foreach`, `getn`, `..`; there is no `#`. Status 0 is success, 1
 | Command | What it does |
 |---|---|
 | `pos <id>` | Log position and direction of the entity (matrix at `entity+0x30`) |
+| `setpos <id> <x> <y> <z>` | Write the entity matrix position once (does not stick; the body overrides it) |
 | `ent <id> <len>` | Log the entity object address, vtable and `len` bytes as hex, with a float column |
 | `peek <hexaddr> <len>` | Hex dump of memory (float column) |
 | `poke <hexaddr> <hex32>` / `pokef <hexaddr> <float>` | Write a 32-bit value / a float |
@@ -80,18 +81,22 @@ Lua is 4.0: use `foreach`, `getn`, `..`; there is no `#`. Status 0 is success, 1
 
 ## Two copies on one PC
 
-A second copy of the game needs three changes in its own `Dunia.dll` (a copy of the file
-in the second test folder, never the original; keep a backup). They are same-length
-byte patches, offsets for the build above:
+Each test copy needs two same-length byte patches in its own `Dunia.dll` (the copy of the
+file in that test folder, never the original; keep a backup). Offsets for the build above:
 
 1. **Mutex name.** The string `FarCry2Instance` (file offset `0xE08950`): change one
-   character (for example `FarCry2Instanc2`) so both copies can run.
-2. **Profile folder.** The 19-byte string `My Games\Far Cry 2\` (file offset `0xE089A0`): replace
-   it with another 19-byte string (for example `My Games\FC2test_A\`) and give each copy its
-   own folder under `Documents\My Games` that holds a copy of your `GamerProfile.xml`
-   (set `Fullscreen="0"` and a small resolution) and, to load a save, a `Saved Games`
-   folder with a copy of one `.sav`. Without a profile file the client quits.
-3. Start each copy by hand, press Continue, and wait until you are in the world.
+   character (for example `FarCry2InstancA` / `FarCry2InstancB`) so both copies can run.
+2. **Profile folder.** The 10-byte string `\Far Cry 2` (file offset `0xE0E094`, next to
+   `\GamerProfile.xml` and `\My Games`): replace it with another 10-byte string (for example
+   `\FC2test_A` / `\FC2test_B`). Profile and saves then come from
+   `Documents\My Games\FC2test_A\`. Give each copy that folder with a copy of your
+   `GamerProfile.xml` (set `Fullscreen="0"` and a small resolution) and, to load a save, a
+   `Saved Games` folder with a copy of one `.sav`. Without a profile file the client quits.
+   The 19-byte string `My Games\Far Cry 2\` at `0xE089A0` does **not** move the profile: with
+   only that patch the game still opens your real `GamerProfile.xml` (check the
+   `CreateFileW ... GamerProfile.xml` line in `coop_probe.log`).
+
+Then start each copy by hand, press Continue, and wait until you are in the world.
 
 Then, in each `bin` folder, create `coop_native.txt` (the entity id of the main character
 is the same in both copies when they load the same save; get it with `GetLocalPlayerId()`):
