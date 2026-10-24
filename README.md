@@ -121,6 +121,30 @@ it); everything else increments `drop`. The PCs must reach each other: same LAN,
 open to anyone who can reach it (only the peer's packets are used). Tested so far only with both
 copies on one PC, sending to that PC's own LAN address.
 
+### Through Steam, without IP addresses: `relay/fc2_relay.py`
+
+A relay next to each game copy carries the probe's packets, so friends don't need IPs or port
+forwarding. The probe talks only to its local relay: `netstart <game port> 127.0.0.1 <relay port> <id>`.
+Python 3, 64-bit; the Steam transport also needs the Steam client running and `steam_api64.dll`
+from the Steamworks.NET Standalone release 2025.164.1 (`Windows-x64/steam_api64.dll`,
+SHA-256 `eb17909a76668cf9ae0b92a618a34a50f6c73d3a6787cb4dd8ce36a8b10bfb75`; not included here).
+It runs as Steam's free "Spacewar" app (AppID 480), so friends see you as "playing Spacewar".
+
+```
+host:   python relay\fc2_relay.py --transport steam --host --steam-dll <steam_api64.dll> --game-port 9101 --relay-port 9201 [--invite "<friend's Steam name>"]
+friend: python relay\fc2_relay.py --transport steam --join friend --steam-dll <steam_api64.dll> --game-port 9102 --relay-port 9202
+```
+
+The host creates a friends-only lobby (tagged `fc2coop=1`) and logs its id; the friend joins by id
+(`--join <id>`) or with `--join friend`, which finds a friend hosting one. Sessions are accepted only
+from lobby members; probe packets go unreliable on channel 0, a keep-alive and goodbye go reliable on
+channel 1, and a peer silent for 20 s is dropped. `--transport udp --udp-local <port> --udp-peer <port>`
+is a stand-in that relays over plain UDP, used by the test to run the whole chain on one PC.
+
+Tested: the whole chain through two udp relays with both copies on one PC (the two-copy test with
+`-Relay`), and the Steam host side on one account (init, lobby created and left). Not tested yet:
+a second Steam account joining, Steam P2P messages and invites.
+
 ## Automated two-copy test
 
 `tests/two_copy_walk.ps1` runs the two-copy setup above without a human: it starts both test
@@ -137,7 +161,9 @@ profiles; the script does not patch anything.
 powershell -ExecutionPolicy Bypass -File tests\two_copy_walk.ps1 -CopyA <test copy A> -CopyB <test copy B> -OutDir <results folder>
 ```
 
-With `-PeerIp <this PC's LAN address>` both copies use the network mode, and a further check
+With `-Relay` the probes talk to two `relay/fc2_relay.py` processes (udp transport) instead of to
+each other, and two more checks require both relays to have carried traffic. With
+`-PeerIp <this PC's LAN address>` both copies use the network mode, and a further check
 sends 30 forged packets from `127.0.0.1` to copy B and requires them to be dropped. The windows
 are titled `A` and `B` so they are easy to tell apart.
 
@@ -173,7 +199,7 @@ heading code (the avatar stays at 0 degrees).
 ## Known limits
 
 The same as in the write-up: no walking animation for the avatar, no weapons, health or
-mission state, no NAT traversal or relay (direct UDP only), exact build only, and positions written into a body bypass
+mission state, direct UDP has no NAT traversal (use the Steam relay), exact build only, and positions written into a body bypass
 collision (the avatar passes through scenery; it mirrors the peer's already-collided position).
 
 ## License

@@ -27,6 +27,9 @@ param(
     # address each copy sends to; anything but 127.x makes the probe bind on the network and
     # adds a check that packets from another address are dropped
     [string]$PeerIp = '127.0.0.1',
+    # route the probes through relay/fc2_relay.py (udp stand-in transport) instead of straight to each other
+    [switch]$Relay,
+    [string]$Python = 'python',
     [double]$WalkRadius = 3,
     [double]$WalkSeconds = 20,
     [double]$WalkSpeed = 2,
@@ -217,8 +220,22 @@ try {
     $pid0 = $ids.A
 
     # ---- link ----
-    Native A "netstart 9101 $PeerIp 9102 $pid0"
-    Native B "netstart 9102 $PeerIp 9101 $pid0"
+    if ($Relay) {
+        # probe A <-> relay A (9201) <-udp 9301/9302-> relay B (9202) <-> probe B
+        $relayPy = Join-Path $PSScriptRoot '..\relay\fc2_relay.py'
+        foreach ($r in @(@{k = 'A'; game = 9101; relay = 9201; loc = 9301; peer = 9302 }, @{k = 'B'; game = 9102; relay = 9202; loc = 9302; peer = 9301 })) {
+            $procs["relay$($r.k)"] = Start-Process $Python -ArgumentList @('-I', '-u', "`"$relayPy`"", '--transport', 'udp', '--game-port', $r.game, '--relay-port', $r.relay, '--udp-local', $r.loc, '--udp-peer', $r.peer) `
+                -RedirectStandardOutput (Join-Path $run "relay_$($r.k).log") -RedirectStandardError (Join-Path $run "relay_$($r.k).err") -WindowStyle Hidden -PassThru
+        }
+        Start-Sleep 2
+        foreach ($k in 'A', 'B') { if ($procs["relay$k"].HasExited) { throw "relay $k exited: $(Get-Content (Join-Path $run "relay_$k.err") -Raw)" } }
+        Native A "netstart 9101 127.0.0.1 9201 $pid0"
+        Native B "netstart 9102 127.0.0.1 9202 $pid0"
+    }
+    else {
+        Native A "netstart 9101 $PeerIp 9102 $pid0"
+        Native B "netstart 9102 $PeerIp 9101 $pid0"
+    }
     foreach ($k in $copies.Keys) {
         $up = WaitFor "socket up ($k)" 10 { LogLines $copies[$k] | Select-String 'net: socket up, local (\S+) -> peer (\S+)' | Select-Object -Last 1 }
         Say "info: $k $($up.Matches[0].Value)"
@@ -310,6 +327,13 @@ try {
     Check 'A turned' ($turned -ge 30) ("A's heading range {0:N1} deg over 3 turns (needs >= 30)" -f $turned)
     Check 'avatar heading follows A' (($diffs | Measure-Object -Max).Maximum -le 15) ("max difference {0:N1} deg (limit 15)" -f ($diffs | Measure-Object -Max).Maximum)
 
+    if ($Relay) {
+        foreach ($k in 'A', 'B') {
+            $st = Get-Content (Join-Path $run "relay_$k.log") -ErrorAction SilentlyContinue | Select-String 'stats from_game=(\d+) to_peer=(\d+) from_peer=(\d+) to_game=(\d+)' | Select-Object -Last 1
+            $ok = $st -and [int]$st.Matches[0].Groups[2].Value -gt 100 -and [int]$st.Matches[0].Groups[4].Value -gt 100
+            Check "relay $k carried traffic" $ok $(if ($st) { $st.Line } else { 'no stats line' })
+        }
+    }
     foreach ($k in $copies.Keys) {
         $p = $procs[$k]; $p.Refresh()
         Check "window title $k" ($p.MainWindowTitle -eq $k) ("title '{0}', set {1} time(s) during the run" -f $p.MainWindowTitle, $titleSets[$k])
