@@ -390,7 +390,9 @@ static LONG WINAPI veh_filter(EXCEPTION_POINTERS *ep)
 }
 
 static BYTE *entity_obj(unsigned long long id, void **holder_out);
-static int find_body(unsigned long long id, BYTE **body_out, BYTE **mat_out)
+/* exclude: a body to skip (the local player's when binding the avatar: both stand on the same spot
+ * after loading the same save, so the nearest body would otherwise be the player's own) */
+static int find_body(unsigned long long id, BYTE **body_out, BYTE **mat_out, const BYTE *exclude)
 {
     void *holder = NULL;
     BYTE *obj = entity_obj(id, &holder);
@@ -415,7 +417,7 @@ static int find_body(unsigned long long id, BYTE **body_out, BYTE **mat_out)
                     if (n > sizeof chunk) n = sizeof chunk;
                     if (!safe_read(c, chunk, n)) continue;
                     for (k = 0; k + 4 <= n && k < 0x10000; k += 4) {
-                        if (*(unsigned *)(chunk + k) == vt && k + 0x1C <= n) {
+                        if (*(unsigned *)(chunk + k) == vt && k + 0x1C <= n && c + k != exclude) {
                             BYTE *m = *(BYTE **)(chunk + k + 0x18);
                             float f[3];
                             if (safe_read(m + 0x30, f, sizeof f)) {
@@ -494,7 +496,7 @@ static void native_cmd(const char *ln)
         *(float *)(*g_av_body_p + a) = fx; *(float *)(*g_av_body_p + a + 4) = fy; *(float *)(*g_av_body_p + a + 8) = fz;
         logf_("avvel: wrote %.2f %.2f %.2f at avatar body+0x%lx", fx, fy, fz, a);
     } else if (sscanf(ln, "findbody %llu", &id) == 1) {
-        find_body(id, &g_body, &g_bodymat);
+        find_body(id, &g_body, &g_bodymat, NULL);
     } else if (strncmp(ln, "posb", 4) == 0) {
         if (!g_bodymat || IsBadReadPtr(g_bodymat, 0x40) || *(unsigned *)g_body != (unsigned)(g_base + RVA_BODY_VTABLE)) logf_("posb: no valid cached body");
         else logf_("posb: %.3f %.3f %.3f", *(float *)(g_bodymat + 0x30), *(float *)(g_bodymat + 0x34), *(float *)(g_bodymat + 0x38));
@@ -634,7 +636,7 @@ static DWORD g_av_lastspawn, g_av_lastfind;
 
 static int av_valid(void)
 {
-    return g_av_mat && !IsBadWritePtr(g_av_mat, 0x40) && !IsBadReadPtr(g_av_body, 4) && *(unsigned *)g_av_body == (unsigned)(g_base + RVA_BODY_VTABLE);
+    return g_av_mat && g_av_body != g_body && !IsBadWritePtr(g_av_mat, 0x40) && !IsBadReadPtr(g_av_body, 4) && *(unsigned *)g_av_body == (unsigned)(g_base + RVA_BODY_VTABLE);
 }
 
 static void av_remove(void)
@@ -670,9 +672,10 @@ static void av_tick(DWORD now)
         return;
     }
     if (!av_valid()) {
+        if (!g_body) return;  /* need our own body first, so it can be excluded */
         if (now - g_av_lastfind < 1000) return;
         g_av_lastfind = now;
-        if (find_body(g_av_id, &g_av_body, &g_av_mat)) { g_av_have = 0; logf_("avatar body bound"); }
+        if (find_body(g_av_id, &g_av_body, &g_av_mat, g_body)) { g_av_have = 0; logf_("avatar body bound: %p (local body %p)", g_av_body, g_body); }
         return;
     }
     {
