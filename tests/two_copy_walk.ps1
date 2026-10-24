@@ -49,6 +49,7 @@ public static class FcWin {
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint f, UIntPtr e);
   [DllImport("user32.dll")] public static extern uint MapVirtualKey(uint code, uint type);
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint f);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint f, int dx, int dy, uint d, UIntPtr e);
 }
 "@
 
@@ -101,6 +102,13 @@ function Key($k, [byte]$vk) {
     $sc = [byte][FcWin]::MapVirtualKey($vk, 0)
     [FcWin]::keybd_event($vk, $sc, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 80
     [FcWin]::keybd_event($vk, $sc, 2, [UIntPtr]::Zero)
+}
+
+# Relative mouse movement in steps (turns the player: the game reads it as look input).
+function MouseX($k, [int]$dx) {
+    $p = $procs[$k]; $p.Refresh()
+    [void][FcWin]::SetForegroundWindow($p.MainWindowHandle); Start-Sleep -Milliseconds 200
+    1..20 | ForEach-Object { [FcWin]::mouse_event(1, [int]($dx / 20), 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 30 }
 }
 
 # Runs Lua in a copy and returns __out (a nonce tags the answer so old lines are never read).
@@ -245,6 +253,24 @@ try {
     Check 'avatar moved' ($span -ge 1.5 * $WalkRadius) ("avatar span {0:N2} m (needs >= {1:N2})" -f $span, (1.5 * $WalkRadius))
     Check 'avatar follows A' ($maxErr -le 2.5 -and $meanErr -le 1.5) ("distance to A: mean {0:N2} m, max {1:N2} m (limits 1.5 / 2.5)" -f $meanErr, $maxErr)
     Check 'B player stays put' ($drift -le 0.5) ("max drift {0:N2} m over {1} samples (limit 0.5)" -f $drift, $own.Count)
+
+    # ---- heading: turn A's player with the mouse, compare A's direction with B's avatar ----
+    $diffs = @(); $angles = @()
+    foreach ($dx in 600, -1200, 900) {
+        Guard; MouseX A $dx; Start-Sleep 3
+        Native A "pos $pid0"; Native B "pos $avB"
+        $la = (LogLines $copies.A | Select-String "pos ${pid0}: .* dir=\((\S+),(\S+)\)" | Select-Object -Last 1).Matches[0]
+        $lb = (LogLines $copies.B | Select-String "pos ${avB}: .* dir=\((\S+),(\S+)\)" | Select-Object -Last 1).Matches[0]
+        $aa = [math]::Atan2([double]$la.Groups[2].Value, [double]$la.Groups[1].Value) * 180 / [math]::PI
+        $ab = [math]::Atan2([double]$lb.Groups[2].Value, [double]$lb.Groups[1].Value) * 180 / [math]::PI
+        $d = [math]::Abs((($aa - $ab) % 360 + 540) % 360 - 180)
+        $diffs += $d; $angles += $aa
+        Say ("info: heading A {0:N1} deg, B avatar {1:N1} deg, difference {2:N1} deg" -f $aa, $ab, $d)
+    }
+    $turned = ($angles | Measure-Object -Max -Min | ForEach-Object { $_.Maximum - $_.Minimum })
+    Check 'A turned' ($turned -ge 30) ("A's heading range {0:N1} deg over 3 turns (needs >= 30)" -f $turned)
+    Check 'avatar heading follows A' (($diffs | Measure-Object -Max).Maximum -le 15) ("max difference {0:N1} deg (limit 15)" -f ($diffs | Measure-Object -Max).Maximum)
+
     foreach ($k in $copies.Keys) {
         $bad = @(LogLines $copies[$k] | Select-String 'CRASH|ACCESS VIOLATION')
         Check "no crash lines $k" ($bad.Count -eq 0) "$($bad.Count) line(s)"

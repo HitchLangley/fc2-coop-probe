@@ -10,8 +10,8 @@ that you drop into a **test copy** of the game. Inside the running game it
 - and, as a prototype, exchanges the player's position between two copies over its own UDP
   socket and moves an invincible avatar of the peer.
 
-It is **not** a playable co-op mod: the avatar slides in an idle pose, with no animation,
-heading, weapons, health or mission sync. It is the code behind the Far Cry 2 write-up in
+It is **not** a playable co-op mod: the avatar slides in an idle pose (it turns to face where
+the peer looks, but has no walking animation), with no weapons, health or mission sync. It is the code behind the Far Cry 2 write-up in
 [coop-anything](https://github.com/cranebeaker/coop-anything/tree/main/games/far-cry-2)
 (pull request: https://github.com/cranebeaker/coop-anything/pull/43); the findings, dates and
 evidence are there.
@@ -115,7 +115,9 @@ makes it invincible (`CFCXCountersComponent_SetInvincible`) and drives its body.
 `tests/two_copy_walk.ps1` runs the two-copy setup above without a human: it starts both test
 copies, presses Enter until each has loaded the save from its own profile, runs `netstart` on
 both, walks copy A's player on a circle with `walk`, and checks from the logs and `pos`
-readings that copy B's avatar follows A while B's own player stays put. A kill switch stops
+readings that copy B's avatar follows A while B's own player stays put. Then it turns A's
+player three times with relative mouse movement and checks that B's avatar faces the same
+way (within 15 degrees). A kill switch stops
 both copies if a log line names the real profile folder, and the real profile folder is
 compared with a snapshot afterwards. Both copies must already be patched and have their
 profiles; the script does not patch anything.
@@ -124,11 +126,12 @@ profiles; the script does not patch anything.
 powershell -ExecutionPolicy Bypass -File tests\two_copy_walk.ps1 -CopyA <test copy A> -CopyB <test copy B> -OutDir <results folder>
 ```
 
-It presses Enter in the game windows, so leave the keyboard alone for the ~2 minutes it runs.
-Exit code 0 = pass, 1 = a check failed, 2 = setup problem; `run.txt`, `results.json`,
-`positions_b.csv` and both logs go to `<results folder>\<timestamp>\`. The check
+It presses Enter and moves the mouse in the game windows, so leave keyboard and mouse alone for
+the ~2.5 minutes it runs. Exit code 0 = pass, 1 = a check failed, 2 = setup problem; `run.txt`,
+`results.json`, `positions_b.csv` and both logs go to `<results folder>\<timestamp>\`. The check
 `B player stays put` is the one that catches the avatar-binding bug (with the unfixed probe
-B's own player was dragged 16 m).
+B's own player was dragged 16 m); `avatar heading follows A` fails on a probe without the
+heading code (the avatar stays at 0 degrees).
 
 ## How it works
 
@@ -143,12 +146,18 @@ B's own player was dragged 16 m).
   (a plain read can fault when another thread frees a page) for objects of one class and
   taking the one whose motion transform is nearest to the entity. Heap addresses change every
   session; the class does not.
+- Heading: the body is an upright capsule whose rotation is always identity; where a pawn faces
+  is the yaw in the entity matrix (`entity+0x30`, rows `(d0,d1,0)`, `(-d1,d0,0)`, `(0,0,1)`). For
+  the local player the controller rewrites it every frame from mouse look; the avatar has no
+  controller, so the rotation the probe writes there each tick stays (smoothed 25 % per tick).
+  Writing the body's rotation, or calling `TeleportEntity` with angles, changes nothing;
+  `SpawnEntityFromArchetype` only uses its last argument (yaw in degrees) at spawn.
 - An exception filter and a vectored handler log access violations. Many at start-up come
   from system libraries and are harmless.
 
 ## Known limits
 
-The same as in the write-up: no animation or heading for the avatar, no weapons, health or
+The same as in the write-up: no walking animation for the avatar, no weapons, health or
 mission state, loopback ports only, exact build only, and positions written into a body bypass
 collision (the avatar passes through scenery; it mirrors the peer's already-collided position).
 

@@ -630,7 +630,7 @@ static NetPkt g_remote;
 static unsigned long long g_av_id;
 static BYTE *g_av_body, *g_av_mat;
 static void av_init_ptr(void) { g_av_body_p = &g_av_body; }
-static float g_av_cur[3];
+static float g_av_cur[3], g_av_dir[2];
 static int g_av_have;
 static DWORD g_av_lastspawn, g_av_lastfind;
 
@@ -684,6 +684,30 @@ static void av_tick(DWORD now)
         if (!g_av_have || d > 6.0f) { memcpy(cur, tg, sizeof g_av_cur); g_av_have = 1; }
         else { cur[0] += (tg[0] - cur[0]) * 0.25f; cur[1] += (tg[1] - cur[1]) * 0.25f; cur[2] += (tg[2] - cur[2]) * 0.25f; }
         *(float *)(g_av_mat + 0x30) = cur[0]; *(float *)(g_av_mat + 0x34) = cur[1]; *(float *)(g_av_mat + 0x38) = cur[2];
+    }
+    /* heading: the body capsule never rotates and the avatar has no controller, so the entity matrix
+     * keeps whatever rotation is written into it (yaw only, rows (d0,d1,0) (-d1,d0,0) (0,0,1),
+     * the same layout as the player's) */
+    {
+        float dx = g_remote.dir[0], dy = g_remote.dir[1], n = sqrtf(dx * dx + dy * dy);
+        void *holder = NULL;
+        BYTE *obj;
+        if (n < 0.5f) return;
+        dx /= n; dy /= n;
+        if (!g_av_have || g_av_dir[0] * dx + g_av_dir[1] * dy < -0.9f) { g_av_dir[0] = dx; g_av_dir[1] = dy; }
+        else {
+            g_av_dir[0] += (dx - g_av_dir[0]) * 0.25f; g_av_dir[1] += (dy - g_av_dir[1]) * 0.25f;
+            n = sqrtf(g_av_dir[0] * g_av_dir[0] + g_av_dir[1] * g_av_dir[1]);
+            if (n < 1e-3f) { g_av_dir[0] = dx; g_av_dir[1] = dy; } else { g_av_dir[0] /= n; g_av_dir[1] /= n; }
+        }
+        obj = entity_obj(g_av_id, &holder);
+        if (obj && !IsBadWritePtr(obj + 0x30, 0x30)) {
+            float *r = (float *)(obj + 0x30);
+            r[0] = g_av_dir[0]; r[1] = g_av_dir[1]; r[2] = 0;
+            r[4] = -g_av_dir[1]; r[5] = g_av_dir[0]; r[6] = 0;
+            r[8] = 0; r[9] = 0; r[10] = 1;
+        }
+        if (holder) (*(int *)((BYTE *)holder + 8))--;
     }
 }
 
