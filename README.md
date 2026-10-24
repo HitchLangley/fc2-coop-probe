@@ -76,7 +76,7 @@ Lua is 4.0: use `foreach`, `getn`, `..`; there is no `#`. Status 0 is success, 1
 | `hold <id> <x> <y> <z>` / `unhold` | Write the entity matrix position every tick (does not stick; kept as the negative test) |
 | `follow <id> <hex offsets>` / `tp <id> <x> <y> <z> <hex offsets>` | Follow a pointer chain from the entity; write the position at its end |
 | `bodyvel` / `avvel <x> <y> <z> <hexoffset>` | Write three floats into the cached / avatar body at an offset |
-| `netstart <localport> <peerip> <peerport> <id>` | Open the UDP transport and start the avatar logic |
+| `netstart <localport> <peerip> <peerport> <id>` | Open the UDP transport and start the avatar logic (peer `127.x`: loopback only; any other address: listens on all interfaces, accepts packets from that address only) |
 | `netstop` | Stop it and remove the avatar |
 
 ## Two copies on one PC
@@ -106,9 +106,20 @@ netstart 9101 127.0.0.1 9102 <id>     (copy A)
 netstart 9102 127.0.0.1 9101 <id>     (copy B)
 ```
 
-The log shows `net: tx=... rx=...` once a second. After the first packet each copy spawns
-an avatar of the peer (`SpawnEntityFromArchetype` with the local player's own name),
+The log shows `net: tx=... rx=... drop=...` once a second. After the first packet each copy
+spawns an avatar of the peer (`SpawnEntityFromArchetype` with the local player's own name),
 makes it invincible (`CFCXCountersComponent_SetInvincible`) and drives its body.
+
+### Two PCs
+
+Give each copy the other PC's address instead of `127.0.0.1` (for example
+`netstart 9101 <IP of PC B> 9102 <id>` on A and `netstart 9102 <IP of PC A> 9101 <id>` on B).
+With a non-loopback peer the probe binds its port on all interfaces and counts only packets
+of the right size and magic from the peer's IP (the source port is not checked, NAT may change
+it); everything else increments `drop`. The PCs must reach each other: same LAN, a virtual LAN
+(VPN), or UDP port forwarding. There is no NAT traversal, relay or encryption, so the port is
+open to anyone who can reach it (only the peer's packets are used). Tested so far only with both
+copies on one PC, sending to that PC's own LAN address.
 
 ## Automated two-copy test
 
@@ -125,6 +136,10 @@ profiles; the script does not patch anything.
 ```
 powershell -ExecutionPolicy Bypass -File tests\two_copy_walk.ps1 -CopyA <test copy A> -CopyB <test copy B> -OutDir <results folder>
 ```
+
+With `-PeerIp <this PC's LAN address>` both copies use the network mode, and a further check
+sends 30 forged packets from `127.0.0.1` to copy B and requires them to be dropped. The windows
+are titled `A` and `B` so they are easy to tell apart.
 
 It presses Enter and moves the mouse in the game windows, so leave keyboard and mouse alone for
 the ~2.5 minutes it runs. Exit code 0 = pass, 1 = a check failed, 2 = setup problem; `run.txt`,
@@ -158,7 +173,7 @@ heading code (the avatar stays at 0 degrees).
 ## Known limits
 
 The same as in the write-up: no walking animation for the avatar, no weapons, health or
-mission state, loopback ports only, exact build only, and positions written into a body bypass
+mission state, no NAT traversal or relay (direct UDP only), exact build only, and positions written into a body bypass
 collision (the avatar passes through scenery; it mirrors the peer's already-collided position).
 
 ## License

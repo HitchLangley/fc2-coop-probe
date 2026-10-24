@@ -625,7 +625,7 @@ typedef struct { unsigned magic, seq; float pos[3]; float dir[2]; } NetPkt;
 static SOCKET g_ns = INVALID_SOCKET;
 static struct sockaddr_in g_peer;
 static DWORD g_net_lastsend, g_net_lastlog, g_net_lastfind, g_net_lastrx;
-static unsigned g_net_seq, g_net_tx, g_net_rx;
+static unsigned g_net_seq, g_net_tx, g_net_rx, g_net_drop;
 static NetPkt g_remote;
 static unsigned long long g_av_id;
 static BYTE *g_av_body, *g_av_mat;
@@ -726,17 +726,20 @@ static void net_tick(void)
         struct sockaddr_in a;
         u_long nb = 1;
         WSAStartup(MAKEWORD(2, 2), &wd);
-        g_ns = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-        memset(&a, 0, sizeof a);
-        a.sin_family = AF_INET; a.sin_addr.s_addr = htonl(INADDR_LOOPBACK); a.sin_port = htons((unsigned short)g_net_lport);
-        if (bind(g_ns, (struct sockaddr *)&a, sizeof a) != 0) { logf_("net: bind %u failed (%d)", g_net_lport, WSAGetLastError()); closesocket(g_ns); g_ns = INVALID_SOCKET; g_net_cfg = 0; return; }
-        ioctlsocket(g_ns, FIONBIO, &nb);
         memset(&g_peer, 0, sizeof g_peer);
         g_peer.sin_family = AF_INET; g_peer.sin_addr.s_addr = inet_addr(g_net_pip); g_peer.sin_port = htons((unsigned short)g_net_pport);
-        g_net_seq = g_net_tx = g_net_rx = 0; g_net_lastsend = g_net_lastlog = now; g_net_lastrx = 0;
+        if (g_peer.sin_addr.s_addr == INADDR_NONE) { logf_("net: bad peer address %s", g_net_pip); g_net_cfg = 0; return; }
+        memset(&a, 0, sizeof a);
+        /* a peer on this PC (127.x) keeps the port on loopback; any other peer needs the port on the network */
+        a.sin_family = AF_INET; a.sin_port = htons((unsigned short)g_net_lport);
+        a.sin_addr.s_addr = (ntohl(g_peer.sin_addr.s_addr) >> 24) == 127 ? htonl(INADDR_LOOPBACK) : htonl(INADDR_ANY);
+        g_ns = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (bind(g_ns, (struct sockaddr *)&a, sizeof a) != 0) { logf_("net: bind %u failed (%d)", g_net_lport, WSAGetLastError()); closesocket(g_ns); g_ns = INVALID_SOCKET; g_net_cfg = 0; return; }
+        ioctlsocket(g_ns, FIONBIO, &nb);
+        g_net_seq = g_net_tx = g_net_rx = g_net_drop = 0; g_net_lastsend = g_net_lastlog = now; g_net_lastrx = 0;
         memset(&g_remote, 0, sizeof g_remote);
         g_net_cfg = 2;
-        logf_("net: socket up, local %u -> peer %s:%u", g_net_lport, g_net_pip, g_net_pport);
+        logf_("net: socket up, local %s:%u -> peer %s:%u", a.sin_addr.s_addr == htonl(INADDR_LOOPBACK) ? "127.0.0.1" : "0.0.0.0", g_net_lport, g_net_pip, g_net_pport);
     }
     if (g_walk && g_bodymat && !IsBadWritePtr(g_bodymat, 0x40)) {
         float t = (GetTickCount() - g_walk_t0) / 1000.0f;
@@ -757,12 +760,14 @@ static void net_tick(void)
             native_cmd(c);
         }
     }
-    /* receive everything pending */
+    /* receive everything pending; only packets from the peer's address count (the port may differ behind NAT) */
     for (;;) {
         NetPkt p;
-        int r = recvfrom(g_ns, (char *)&p, sizeof p, 0, NULL, NULL);
-        if (r != (int)sizeof p) break;
-        if (p.magic != NET_MAGIC) continue;
+        struct sockaddr_in from;
+        int fl = sizeof from;
+        int r = recvfrom(g_ns, (char *)&p, sizeof p, 0, (struct sockaddr *)&from, &fl);
+        if (r == SOCKET_ERROR) { if (WSAGetLastError() == WSAEMSGSIZE) { g_net_drop++; continue; } break; }
+        if (r != (int)sizeof p || p.magic != NET_MAGIC || from.sin_addr.s_addr != g_peer.sin_addr.s_addr) { g_net_drop++; continue; }
         g_remote = p; g_net_rx++; g_net_lastrx = now;
     }
     av_tick(now);
@@ -781,9 +786,9 @@ static void net_tick(void)
     }
     if (now - g_net_lastlog >= 1000) {
         g_net_lastlog = now;
-        logf_("net: tx=%u rx=%u local=(%.2f %.2f %.2f) remote=(%.2f %.2f %.2f) seq=%u age=%lums", g_net_tx, g_net_rx,
+        logf_("net: tx=%u rx=%u local=(%.2f %.2f %.2f) remote=(%.2f %.2f %.2f) seq=%u age=%lums drop=%u", g_net_tx, g_net_rx,
               g_bodymat ? *(float *)(g_bodymat + 0x30) : 0, g_bodymat ? *(float *)(g_bodymat + 0x34) : 0, g_bodymat ? *(float *)(g_bodymat + 0x38) : 0,
-              g_remote.pos[0], g_remote.pos[1], g_remote.pos[2], g_remote.seq, g_net_lastrx ? (unsigned long)(now - g_net_lastrx) : 0UL);
+              g_remote.pos[0], g_remote.pos[1], g_remote.pos[2], g_remote.seq, g_net_lastrx ? (unsigned long)(now - g_net_lastrx) : 0UL, g_net_drop);
     }
 }
 

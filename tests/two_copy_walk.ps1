@@ -24,6 +24,9 @@ param(
     [string]$RealProfile = 'Far Cry 2',
     [string]$Documents = [Environment]::GetFolderPath('MyDocuments'),
     [string]$OutDir = (Join-Path (Get-Location) 'fc2-test-results'),
+    # address each copy sends to; anything but 127.x makes the probe bind on the network and
+    # adds a check that packets from another address are dropped
+    [string]$PeerIp = '127.0.0.1',
     [double]$WalkRadius = 3,
     [double]$WalkSeconds = 20,
     [double]$WalkSpeed = 2,
@@ -50,6 +53,7 @@ public static class FcWin {
   [DllImport("user32.dll")] public static extern uint MapVirtualKey(uint code, uint type);
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint f);
   [DllImport("user32.dll")] public static extern void mouse_event(uint f, int dx, int dy, uint d, UIntPtr e);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool SetWindowText(IntPtr h, string s);
 }
 "@
 
@@ -171,6 +175,7 @@ try {
         WaitFor "profile read ($k)" 60 { LogLines $c | Select-String 'CreateFileW .*GamerProfile\.xml' } | Out-Null
         Start-Sleep 8
         $procs[$k].Refresh(); [void][FcWin]::SetWindowPos($procs[$k].MainWindowHandle, [IntPtr]::Zero, $x, 0, 0, 0, 5); $x += 1000
+        [void][FcWin]::SetWindowText($procs[$k].MainWindowHandle, $k)   # title "A" / "B", to tell the windows apart
     }
     foreach ($k in $copies.Keys) {
         $c = $copies[$k]
@@ -199,8 +204,12 @@ try {
     $pid0 = $ids.A
 
     # ---- link ----
-    Native A "netstart 9101 127.0.0.1 9102 $pid0"
-    Native B "netstart 9102 127.0.0.1 9101 $pid0"
+    Native A "netstart 9101 $PeerIp 9102 $pid0"
+    Native B "netstart 9102 $PeerIp 9101 $pid0"
+    foreach ($k in $copies.Keys) {
+        $up = WaitFor "socket up ($k)" 10 { LogLines $copies[$k] | Select-String 'net: socket up, local (\S+) -> peer (\S+)' | Select-Object -Last 1 }
+        Say "info: $k $($up.Matches[0].Value)"
+    }
     $bound = @{}
     foreach ($k in $copies.Keys) {
         $bound[$k] = WaitFor "avatar body bound ($k)" 60 { LogLines $copies[$k] | Select-String 'avatar body bound' | Select-Object -Last 1 }
@@ -221,6 +230,23 @@ try {
         Check "link $k" ($rate -ge 10) ("{0:N1} packets/s received" -f $rate)
     }
     $avB = ((LogLines $copies.B | Select-String 'avatar spawned: (\d+)' | Select-Object -Last 1).Matches[0].Groups[1].Value)
+
+    # ---- network mode: forged packets from another address (loopback) must be dropped by B ----
+    if ($PeerIp -notlike '127.*') {
+        $dropRe = '\] net: .* drop=(\d+)'
+        $d0 = [int]((LogLines $copies.B | Select-String $dropRe | Select-Object -Last 1).Matches[0].Groups[1].Value)
+        $pkt = New-Object byte[] 28
+        [BitConverter]::GetBytes([uint32]0x43324346).CopyTo($pkt, 0)          # NET_MAGIC
+        [BitConverter]::GetBytes([uint32]999999).CopyTo($pkt, 4)              # seq
+        foreach ($i in 0..2) { [BitConverter]::GetBytes([single]1.0).CopyTo($pkt, 8 + 4 * $i) }   # position (1,1,1)
+        $u = New-Object System.Net.Sockets.UdpClient
+        1..30 | ForEach-Object { [void]$u.Send($pkt, $pkt.Length, '127.0.0.1', 9102); Start-Sleep -Milliseconds 20 }
+        $u.Close()
+        Start-Sleep 3
+        $d1 = [int]((LogLines $copies.B | Select-String $dropRe | Select-Object -Last 1).Matches[0].Groups[1].Value)
+        $forged = @(LogLines $copies.B | Select-String 'remote=\(1\.00 1\.00 1\.00\)').Count
+        Check 'forged packets dropped' (($d1 - $d0) -ge 25 -and $forged -eq 0) ("drop counter +{0} for 30 forged packets from 127.0.0.1; remote showed the forged position {1} time(s)" -f ($d1 - $d0), $forged)
+    }
 
     # ---- walk A, sample B ----
     $startTick = Tick ((LogLines $copies.B)[-1])
