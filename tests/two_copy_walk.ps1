@@ -79,8 +79,21 @@ function KillAll {
     Start-Sleep 2
 }
 
+# Window titles "A" / "B", to tell the copies apart. The game resets its title while loading, so this
+# runs from every wait loop and puts the title back whenever it differs.
+$titleSets = @{ A = 0; B = 0 }
+function NameWindows {
+    foreach ($k in $copies.Keys) {
+        $p = $procs[$k]
+        if (-not $p -or $p.HasExited) { continue }
+        $p.Refresh()
+        if ($p.MainWindowHandle -ne 0 -and $p.MainWindowTitle -ne $k) { [void][FcWin]::SetWindowText($p.MainWindowHandle, $k); $titleSets[$k]++ }
+    }
+}
+
 # Kill switch: called from every wait loop. Any log line naming the real profile folder stops both copies.
 function Guard {
+    NameWindows
     foreach ($k in $copies.Keys) {
         $hit = LogLines $copies[$k] | Select-String -SimpleMatch $realMark | Select-Object -First 1
         if ($hit) { KillAll; Check "kill switch ($k)" $false "real profile path in log: $($hit.Line)"; throw 'killed' }
@@ -175,7 +188,7 @@ try {
         WaitFor "profile read ($k)" 60 { LogLines $c | Select-String 'CreateFileW .*GamerProfile\.xml' } | Out-Null
         Start-Sleep 8
         $procs[$k].Refresh(); [void][FcWin]::SetWindowPos($procs[$k].MainWindowHandle, [IntPtr]::Zero, $x, 0, 0, 0, 5); $x += 1000
-        [void][FcWin]::SetWindowText($procs[$k].MainWindowHandle, $k)   # title "A" / "B", to tell the windows apart
+        NameWindows
     }
     foreach ($k in $copies.Keys) {
         $c = $copies[$k]
@@ -297,6 +310,10 @@ try {
     Check 'A turned' ($turned -ge 30) ("A's heading range {0:N1} deg over 3 turns (needs >= 30)" -f $turned)
     Check 'avatar heading follows A' (($diffs | Measure-Object -Max).Maximum -le 15) ("max difference {0:N1} deg (limit 15)" -f ($diffs | Measure-Object -Max).Maximum)
 
+    foreach ($k in $copies.Keys) {
+        $p = $procs[$k]; $p.Refresh()
+        Check "window title $k" ($p.MainWindowTitle -eq $k) ("title '{0}', set {1} time(s) during the run" -f $p.MainWindowTitle, $titleSets[$k])
+    }
     foreach ($k in $copies.Keys) {
         $bad = @(LogLines $copies[$k] | Select-String 'CRASH|ACCESS VIOLATION')
         Check "no crash lines $k" ($bad.Count -eq 0) "$($bad.Count) line(s)"
