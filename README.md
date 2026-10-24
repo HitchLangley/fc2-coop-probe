@@ -110,6 +110,26 @@ The log shows `net: tx=... rx=...` once a second. After the first packet each co
 an avatar of the peer (`SpawnEntityFromArchetype` with the local player's own name),
 makes it invincible (`CFCXCountersComponent_SetInvincible`) and drives its body.
 
+## Automated two-copy test
+
+`tests/two_copy_walk.ps1` runs the two-copy setup above without a human: it starts both test
+copies, presses Enter until each has loaded the save from its own profile, runs `netstart` on
+both, walks copy A's player on a circle with `walk`, and checks from the logs and `pos`
+readings that copy B's avatar follows A while B's own player stays put. A kill switch stops
+both copies if a log line names the real profile folder, and the real profile folder is
+compared with a snapshot afterwards. Both copies must already be patched and have their
+profiles; the script does not patch anything.
+
+```
+powershell -ExecutionPolicy Bypass -File tests\two_copy_walk.ps1 -CopyA <test copy A> -CopyB <test copy B> -OutDir <results folder>
+```
+
+It presses Enter in the game windows, so leave the keyboard alone for the ~2 minutes it runs.
+Exit code 0 = pass, 1 = a check failed, 2 = setup problem; `run.txt`, `results.json`,
+`positions_b.csv` and both logs go to `<results folder>\<timestamp>\`. The check
+`B player stays put` is the one that catches the avatar-binding bug (with the unfixed probe
+B's own player was dragged 16 m).
+
 ## How it works
 
 - `DllMain` loads the real `dinput8.dll` and a watcher thread patches the import table
