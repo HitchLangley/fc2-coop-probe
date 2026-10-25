@@ -138,10 +138,14 @@ It runs as Steam's free "Spacewar" app (AppID 480), so friends see you as "playi
 ```
 host:   python relay\fc2_relay.py --transport steam --host --steam-dll <steam_api64.dll> --game-port 9101 --relay-port 9201 [--invite "<friend's Steam name>"]
 friend: python relay\fc2_relay.py --transport steam --join friend --steam-dll <steam_api64.dll> --game-port 9102 --relay-port 9202
+   or:  python relay\fc2_relay.py --transport steam --join wait   --steam-dll <steam_api64.dll> --game-port 9102 --relay-port 9202
 ```
 
-The host creates a friends-only lobby (tagged `fc2coop=1`) and logs its id; the friend joins by id
-(`--join <id>`) or with `--join friend`, which finds a friend hosting one. Sessions are accepted only
+The host creates a friends-only lobby (tagged `fc2coop=1`), sets its Steam rich presence `connect` to
+`+connect_lobby <id>`, and logs the id; the friend joins by id (`--join <id>`), with `--join friend`, which
+finds a friend hosting one, or with `--join wait`, which joins when the friend accepts the host's Steam
+invite (`--invite`) or clicks Join Game on the host in the Steam friends list (Steam callbacks 333 and 337;
+start the relay before accepting, otherwise Steam starts the real Spacewar instead). Sessions are accepted only
 from lobby members; probe packets go unreliable on channel 0, a keep-alive and goodbye go reliable on
 channel 1, and a peer silent for 20 s is dropped. `--transport udp --udp-local <port> --udp-peer <port>`
 is a stand-in that relays over plain UDP, used by the test to run the whole chain on one PC.
@@ -154,7 +158,8 @@ is a stand-in that relays over plain UDP, used by the test to run the whole chai
   from `-PrivateDir` (one `GamerProfile.xml` and the one `.sav` both PCs load).
 - `scripts/get-steam-api.ps1`: downloads Steamworks.NET Standalone 2025.164.1 and checks the zip and
   `steam_api64.dll` hashes.
-- `scripts/start-coop.ps1 -Role host|join -TestDir <copy> -SteamDll <steam_api64.dll> [-Python <python.exe>]`:
+- `scripts/start-coop.ps1 -Role host|join -TestDir <copy> -SteamDll <steam_api64.dll> [-Python <python.exe>]
+  [-Invite "<friend's Steam name>"] [-Join friend|wait]`:
   checks the copy's patches and that its profile folder has a save (so Enter can never start a New Story),
   starts the copy (window title `A` / `B`, kept for the run), presses Enter until the save opens, waits for the
   player id, starts the relay (host: lobby; join: finds the friend's lobby, retrying for up to 10 min), runs
@@ -170,8 +175,19 @@ Tested:
   avatar (sampled every 2 s) went round about two circles of radius ~3 m centred on the expected point
   (2 m/s x 20 s = 40 m), while that PC's own player stayed within ~0.1 m. The owner saw the avatar move on both
   screens. When the joining PC stopped, the host marked the peer down after the 20 s timeout.
-  Heading was not exercised (`walk` does not turn the player).
-- Not tested yet: invites (`--invite`), Join Game from the Steam friends list, heading across PCs.
+  Heading was not exercised in that run (`walk` does not turn the player);
+- **heading across the two PCs**, 2026-10-25: the host's player turned with the mouse 171.3 → 81.3 → -171.3 →
+  77.6 degrees; the joining PC's avatar (sampled every 2 s) showed the same four headings, 1-2 s later (the
+  sample step), while staying in place;
+- **Steam invite**, 2026-10-25: host `--invite <name>`, joining relay `--join wait`; when the invite was accepted
+  on the second PC, the relay got callback 333, entered the lobby, and the link and avatar came up within 3 s;
+- **Join Game** from the Steam friends list, 2026-10-25: host without an invite, joining relay `--join wait`;
+  Join Game on the host in the second PC's friends list joined the host's new lobby, also through callback
+  **333** (the host is in a joinable lobby; 337 with only a connect string was not observed, but is handled);
+- in all these runs: 0 dropped, no crash lines, neither probe log named a real profile folder; when one side
+  stopped, the other marked the peer down after the 20 s timeout.
+- Not tested yet: Join Game or an invite while the relay is not running (Steam then starts the real Spacewar),
+  longer sessions, packet loss.
 
 ## Automated two-copy test
 

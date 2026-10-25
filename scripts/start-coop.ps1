@@ -19,6 +19,9 @@ param(
     [Parameter(Mandatory = $true)][string]$SteamDll,
     [string]$Python = 'python',
     [string]$Invite,
+    # join side: 'friend' finds a friend's lobby at once (retrying); 'wait' joins when you accept the host's
+    # Steam invite or click Join Game on the host in the Steam friends list
+    [ValidateSet('friend', 'wait')][string]$Join = 'friend',
     [string]$PlayerId,
     [int]$Seconds = 0
 )
@@ -80,7 +83,7 @@ function Native($text) {
 }
 function StartRelay {
     $rargs = @('-I', '-u', "`"$relayPy`"", '--transport', 'steam', '--steam-dll', "`"$SteamDll`"", '--game-port', $gamePort, '--relay-port', $relayPort)
-    if ($Role -eq 'host') { $rargs += '--host'; if ($Invite) { $rargs += @('--invite', "`"$Invite`"") } } else { $rargs += @('--join', 'friend') }
+    if ($Role -eq 'host') { $rargs += '--host'; if ($Invite) { $rargs += @('--invite', "`"$Invite`"") } } else { $rargs += @('--join', $Join) }
     $wd = Join-Path $kit 'steam-run'; New-Item -ItemType Directory -Force $wd | Out-Null
     Start-Process $Python -ArgumentList $rargs -WorkingDirectory $wd -WindowStyle Hidden -PassThru `
         -RedirectStandardOutput (Join-Path $runDir 'relay.log') -RedirectStandardError (Join-Path $runDir 'relay.err')

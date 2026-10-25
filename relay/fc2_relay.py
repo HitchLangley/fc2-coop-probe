@@ -19,6 +19,8 @@ Examples (game copy A host, copy B joins; probe in each copy: netstart <game por
   python fc2_relay.py --transport steam --host --steam-dll <path to steam_api64.dll> [--invite "<friend name>"]
   python fc2_relay.py --transport steam --join <lobby id> --steam-dll <path to steam_api64.dll>
   python fc2_relay.py --transport steam --join friend --steam-dll ...   (finds a friend hosting fc2coop)
+  python fc2_relay.py --transport steam --join wait --steam-dll ...     (joins when you accept the host's Steam
+                                                                          invite or click Join Game in the friends list)
 
 Frames between relays: channel 0 = probe packets as they are (unreliable); channel 1 = control
 (b"ka" keep-alive every second, b"bye"). A peer silent for 20 s is dropped.
@@ -176,6 +178,9 @@ class SteamTransport:
             if not lobby:
                 sys.exit("steam transport: no friend is hosting an fc2coop lobby right now")
             F["JoinLobby"](self.mm, lobby)
+        elif join == "wait":
+            # joined later by on_callback: an accepted invite (333) or Join Game in the friends list (337)
+            log("steam: waiting for a Steam invite or Join Game from the friends list ...")
         else:
             F["JoinLobby"](self.mm, int(join))
             log("steam: joining lobby %s ..." % join)
@@ -252,10 +257,22 @@ class SteamTransport:
                 log("steam: ignored a session request from someone not in the lobby")
         elif cb == 1252:
             log("steam: session failed")
-        elif cb == 333:  # GameLobbyJoinRequested (invite accepted while running)
+        elif cb == 333:  # GameLobbyJoinRequested: lobby (u64) at 0, friend (u64) at 8
             lobby = ctypes.c_uint64.from_address(param).value
-            log("steam: invite accepted, joining lobby %d" % lobby)
+            if lobby == self.lobby:
+                return
+            log("steam: invite or Join Game accepted (lobby), joining lobby %d" % lobby)
             F["JoinLobby"](self.mm, lobby)
+        elif cb == 337:  # GameRichPresenceJoinRequested: friend (u64) at 0, connect string (char[256]) at 8
+            connect = ctypes.string_at(param + 8, 256).split(b"\0", 1)[0].decode(errors="replace")
+            parts = connect.split()
+            if len(parts) == 2 and parts[0] == "+connect_lobby" and parts[1].isdigit():
+                lobby = int(parts[1])
+                if lobby != self.lobby:
+                    log("steam: Join Game from the friends list, joining lobby %d" % lobby)
+                    F["JoinLobby"](self.mm, lobby)
+            else:
+                log("steam: Join Game with an unknown connect string %r, ignored" % connect)
 
     def invite_friend(self, name):
         F = self.f
@@ -330,7 +347,7 @@ def main():
     ap.add_argument("--steam-dll", help="steam: path to steam_api64.dll")
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--host", action="store_true", help="steam: create a friends-only lobby")
-    g.add_argument("--join", help="steam: lobby id, or 'friend' to find a friend hosting")
+    g.add_argument("--join", help="steam: lobby id, 'friend' to find a friend hosting, or 'wait' for a Steam invite / Join Game")
     ap.add_argument("--invite", help="steam host: friend's Steam name to invite once the lobby exists")
     ap.add_argument("--seconds", type=float, default=0, help="stop after this many seconds (0 = run until Ctrl+C)")
     a = ap.parse_args()
