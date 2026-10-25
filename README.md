@@ -81,20 +81,25 @@ Lua is 4.0: use `foreach`, `getn`, `..`; there is no `#`. Status 0 is success, 1
 
 ## Two copies on one PC
 
-Each test copy needs two same-length byte patches in its own `Dunia.dll` (the copy of the
+Each test copy needs three same-length byte patches in its own `Dunia.dll` (the copy of the
 file in that test folder, never the original; keep a backup). Offsets for the build above:
 
 1. **Mutex name.** The string `FarCry2Instance` (file offset `0xE08950`): change one
    character (for example `FarCry2InstancA` / `FarCry2InstancB`) so both copies can run.
 2. **Profile folder.** The 10-byte string `\Far Cry 2` (file offset `0xE0E094`, next to
    `\GamerProfile.xml` and `\My Games`): replace it with another 10-byte string (for example
-   `\FC2test_A` / `\FC2test_B`). Profile and saves then come from
+   `\FC2test_A` / `\FC2test_B`). The profile and the save that is opened then come from
    `Documents\My Games\FC2test_A\`. Give each copy that folder with a copy of your
    `GamerProfile.xml` (set `Fullscreen="0"` and a small resolution) and, to load a save, a
    `Saved Games` folder with a copy of one `.sav`. Without a profile file the client quits.
-   The 19-byte string `My Games\Far Cry 2\` at `0xE089A0` does **not** move the profile: with
-   only that patch the game still opens your real `GamerProfile.xml` (check the
-   `CreateFileW ... GamerProfile.xml` line in `coop_probe.log`).
+3. **Save list folder.** The 19-byte string `My Games\Far Cry 2\` (file offset `0xE089A0`):
+   replace it with the same folder, e.g. `My Games\FC2test_A\`. The list of saves behind
+   Continue / Load Game is built from this folder. Without this patch a copy lists the saves in
+   your real profile folder, and on a PC where the game never ran it lists none (only
+   New Story). This patch alone does not move the profile: patch 2 does that (check the
+   `CreateFileW ... GamerProfile.xml` and `... .sav` lines in `coop_probe.log`).
+
+Expect 17 changed bytes in total compared with the original `Dunia.dll`.
 
 Then start each copy by hand, press Continue, and wait until you are in the world.
 
