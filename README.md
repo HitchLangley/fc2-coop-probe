@@ -146,9 +146,32 @@ from lobby members; probe packets go unreliable on channel 0, a keep-alive and g
 channel 1, and a peer silent for 20 s is dropped. `--transport udp --udp-local <port> --udp-peer <port>`
 is a stand-in that relays over plain UDP, used by the test to run the whole chain on one PC.
 
-Tested: the whole chain through two udp relays with both copies on one PC (the two-copy test with
-`-Relay`), and the Steam host side on one account (init, lobby created and left). Not tested yet:
-a second Steam account joining, Steam P2P messages and invites.
+### Two PCs over Steam: `scripts/`
+
+- `scripts/setup-copy.ps1 -Letter A|B -PrivateDir <folder> [-Probe <dinput8.dll>]`: finds the game, checks
+  the Dunia.dll hash, copies the install to `<drive>\fc2-coop\test-<letter>`, backs up and applies the three
+  patches above (checks 17 changed bytes), installs the probe, and creates `Documents\My Games\FC2test_<letter>`
+  from `-PrivateDir` (one `GamerProfile.xml` and the one `.sav` both PCs load).
+- `scripts/get-steam-api.ps1`: downloads Steamworks.NET Standalone 2025.164.1 and checks the zip and
+  `steam_api64.dll` hashes.
+- `scripts/start-coop.ps1 -Role host|join -TestDir <copy> -SteamDll <steam_api64.dll> [-Python <python.exe>]`:
+  checks the copy's patches and that its profile folder has a save (so Enter can never start a New Story),
+  starts the copy (window title `A` / `B`, kept for the run), presses Enter until the save opens, waits for the
+  player id, starts the relay (host: lobby; join: finds the friend's lobby, retrying for up to 10 min), runs
+  `netstart`, prints the link state every 5 s, and on the join side samples the avatar's and the own player's
+  position every 2 s. Kill switch on the real profile path; logs in `<copy>\coop-runs\<time>-<role>\`.
+
+Tested:
+- the whole chain through two udp relays with both copies on one PC (the two-copy test with `-Relay`);
+- **two PCs on different networks, two Steam accounts that are friends (Steam 1.03 on both)**, 2026-10-25:
+  the joining relay found the host's lobby through the friends list, the session was accepted, and the first
+  message was decoded with the sender identity at offset 16 (x64). Probe packets went both ways at about 16/s
+  for ~7 minutes with 0 dropped on both sides and no disconnect. `walk 3 20 2` on the host: on the joining PC the
+  avatar (sampled every 2 s) went round about two circles of radius ~3 m centred on the expected point
+  (2 m/s x 20 s = 40 m), while that PC's own player stayed within ~0.1 m. The owner saw the avatar move on both
+  screens. When the joining PC stopped, the host marked the peer down after the 20 s timeout.
+  Heading was not exercised (`walk` does not turn the player).
+- Not tested yet: invites (`--invite`), Join Game from the Steam friends list, heading across PCs.
 
 ## Automated two-copy test
 
